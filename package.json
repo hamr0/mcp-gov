@@ -1,6 +1,6 @@
 {
   "name": "mcp-gov",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "MCP Governance System - Permission control and audit logging for Model Context Protocol servers",
   "type": "module",
   "main": "src/index.js",
@@ -44,6 +44,10 @@
   ],
   "author": "hamr0",
   "license": "MIT",
+  "homepage": "https://github.com/hamr0/mcp-gov#readme",
+  "bugs": {
+    "url": "https://github.com/hamr0/mcp-gov/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.5.0",
     "axios": "^1.6.0",
