@@ -43,7 +43,7 @@
     "audit"
   ],
   "author": "hamr0",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/hamr0/mcp-gov#readme",
   "bugs": {
     "url": "https://github.com/hamr0/mcp-gov/issues"

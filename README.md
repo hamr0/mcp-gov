@@ -170,4 +170,4 @@ mcp-gov-proxy --service github --target "npx server" --rules ~/.mcp-gov/rules.js
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE).
