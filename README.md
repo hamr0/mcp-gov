@@ -11,6 +11,11 @@
 
 # MCP Governance System
 
+<p>
+  <img src="https://img.shields.io/github/package-json/v/hamr0/mcp-gov?label=version&color=2a4f8c" alt="version (auto from package.json)">
+  <img src="https://img.shields.io/badge/license-MIT-2a4f8c" alt="license: MIT">
+</p>
+
 </div>
 
 Permission control and audit logging for Model Context Protocol (MCP) servers.
