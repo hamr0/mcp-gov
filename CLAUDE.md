@@ -62,3 +62,5 @@ npm link
 ## More Documentation
 
 See docs/ for detailed architecture, flow diagrams, and testing guides.
+
+For full development and testing standards, see `/home/hamr/Documents/PycharmProjects/gitdone/.claude/memory/AGENT_RULES.md`.
