@@ -19,6 +19,15 @@ const wrapperPath = join(projectRoot, 'bin', 'mcp-gov-wrap.js');
 const githubServerPath = join(projectRoot, 'examples', 'github', 'server.js');
 const githubRulesPath = join(projectRoot, 'examples', 'github', 'rules.json');
 
+// The github example server (examples/github/server.js) calls process.exit(1)
+// unless GITHUB_TOKEN is set, so without it the proxy's target dies and every
+// request times out — which is what failed under the new publish test gate in
+// CI. These tests don't exercise the real GitHub API (allow assertions are
+// lenient; denied ops are blocked by the proxy before any call), so a
+// placeholder token is enough to let the target boot. A real token in the
+// environment is preserved if present. Spawned proxy/target inherit this.
+process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN || 'test-token-placeholder';
+
 /**
  * Helper to spawn a process and collect stdio
  * @param {string} command - Command to run
