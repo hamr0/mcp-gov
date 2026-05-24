@@ -579,7 +579,7 @@ server.registerTool(
 - Permission denials return MCP-compliant error responses
 - Handler errors caught and logged, then returned to client
 - Invalid rules.json causes startup failure with clear error message
-- Missing service in rules defaults to "allow all" (or deny all - OPEN QUESTION)
+- Missing service/operation in rules follows `defaultPolicy` (`allow` by default for backward compatibility; set `deny` for fail-closed) — see Q1
 
 ### 7.3 Performance Considerations
 - Permission check is synchronous (JSON lookup + string parsing)
@@ -755,16 +755,23 @@ const OPERATION_VERBS = {
 ```json
 {
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
-    "axios": "^1.6.0"
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "axios": "^1.12.0",
+    "dotenv": "^16.0.0"
   }
 }
 ```
 
+> `axios` and `dotenv` are used only by the bundled example
+> (`examples/github/server.js`), not by the CLI or the library, so they are
+> `devDependencies` — this keeps their advisories out of the consumer install tree.
+
 ### 10.4 Runtime Requirements
 - ES Modules support (Node.js 14+)
 - Stdio transport support (built into MCP SDK)
-- Environment variable support (dotenv for examples)
+- Environment variable support (dotenv for examples; dev-only)
 
 ---
 
@@ -804,14 +811,19 @@ const OPERATION_VERBS = {
 
 ## 12. Open Questions
 
-### Q1: Default Permission Policy
+### Q1: Default Permission Policy — RESOLVED
 **Question:** Should default policy be "allow" or "deny" when no rule exists for a service/operation?
 
 **Options:**
 - A) **Allow by default** (fail open) - Less friction, matches current MCP behavior
 - B) **Deny by default** (fail closed) - More secure, requires explicit permissions
 
-**Recommendation:** Start with A (allow by default) for POC to maintain compatibility, add configuration option later
+**Resolution:** Made configurable via a top-level `"defaultPolicy"` field in
+rules.json (`"allow"` | `"deny"`). The engine defaults to `allow` when the field
+is absent (backward compatible). `mcp-gov-wrap` now writes `"defaultPolicy": "deny"`
+into newly-generated rules and emits a complete rule set (allow read/write, deny
+delete/execute/admin) per service, so new installs are fail-closed without
+breaking normal traffic. Existing rules files are left untouched.
 
 ### Q2: Audit Log Persistence
 **Question:** Should audit logs write to file, or console.error only?

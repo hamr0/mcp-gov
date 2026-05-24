@@ -6,7 +6,7 @@
  */
 
 import { parseArgs } from 'node:util';
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -223,40 +223,15 @@ function createBackup(configPath) {
   const backupPath = `${configPath}.backup-${timestamp}`;
 
   copyFileSync(configPath, backupPath);
+  // MCP configs frequently embed secrets (API tokens in `env`). Restrict the
+  // backup to owner-only so the copy does not widen exposure beyond the original.
+  try {
+    chmodSync(backupPath, 0o600);
+  } catch {
+    // Non-POSIX filesystems may not support chmod; the copy still succeeded.
+  }
 
   return backupPath;
-}
-
-/**
- * Unwrap wrapped servers in the config
- * @param {Object} config - Full config object with mcpServers
- * @param {string[]} wrappedNames - Names of servers to unwrap
- * @returns {Object} Modified config with unwrapped servers
- */
-function unwrapServers(config, wrappedNames) {
-  const modifiedConfig = JSON.parse(JSON.stringify(config.rawConfig));
-
-  // Get reference to mcpServers in the modified config
-  let mcpServers;
-  if (config.format === 'claude-code') {
-    mcpServers = modifiedConfig.projects.mcpServers;
-  } else {
-    mcpServers = modifiedConfig.mcpServers;
-  }
-
-  // Unwrap each wrapped server
-  for (const serverName of wrappedNames) {
-    const originalConfig = mcpServers[serverName];
-
-    try {
-      mcpServers[serverName] = unwrapServer(originalConfig);
-    } catch (error) {
-      console.warn(`Warning: Cannot unwrap ${serverName}: ${error.message}`);
-      // Skip this server, leave it as-is
-    }
-  }
-
-  return modifiedConfig;
 }
 
 /**

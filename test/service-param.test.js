@@ -117,9 +117,10 @@ console.error('Mock server ready');
     await new Promise(resolve => child.on('close', resolve));
 
     // Check that operation was DENIED (because service=filesystem, operation=read, permission=deny)
+    // Audit lines are structured JSON: {"type":"AUDIT",...,"service":"filesystem",...}
     assert.ok(stderr.includes('DENIED'), 'Should log DENIED in audit');
-    assert.ok(stderr.includes('service=filesystem'), 'Should use provided service name "filesystem"');
-    assert.ok(stderr.includes('operation=read'), 'Should detect read operation');
+    assert.ok(stderr.includes('"service":"filesystem"'), 'Should use provided service name "filesystem"');
+    assert.ok(stderr.includes('"operation":"read"'), 'Should detect read operation');
 
     // Response should be an error (permission denied)
     assert.ok(stdout.includes('error') || stdout.includes('Permission denied'),
@@ -176,7 +177,7 @@ console.error('Mock server ready');
     // There's no rule for service="list", so it defaults to ALLOW
     assert.ok(stderr.includes('ALLOWED') || !stderr.includes('DENIED'),
       'Should allow when service not found in rules (default behavior)');
-    assert.ok(stderr.includes('service=list'),
+    assert.ok(stderr.includes('"service":"list"'),
       'Should extract service name "list" from tool name prefix');
   });
 });

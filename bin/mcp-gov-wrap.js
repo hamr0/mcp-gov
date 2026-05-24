@@ -6,7 +6,7 @@
  */
 
 import { parseArgs } from 'node:util';
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve, dirname, join } from 'node:path';
@@ -249,15 +249,20 @@ function detectUnwrappedServers(mcpServers) {
  * @returns {Object} Wrapped server configuration
  */
 function wrapServer(serverName, serverConfig, rulesPath) {
-  // Build target command from original config
+  const originalArgs = Array.isArray(serverConfig.args) ? serverConfig.args : [];
+
+  // Build the human-readable target string (command + args). Kept for backward
+  // compatibility and display; the proxy uses --target-args for execution.
   let targetCommand = serverConfig.command || '';
-
-  // Append original args if they exist
-  if (serverConfig.args && Array.isArray(serverConfig.args)) {
-    targetCommand += ' ' + serverConfig.args.join(' ');
+  if (originalArgs.length > 0) {
+    targetCommand += ' ' + originalArgs.join(' ');
   }
-
   targetCommand = targetCommand.trim();
+
+  // Authoritative argv passed to the proxy as a JSON array: [command, ...args].
+  // This preserves argument boundaries (e.g. paths containing spaces) that the
+  // whitespace-joined --target string cannot represent.
+  const targetArgv = [serverConfig.command || '', ...originalArgs];
 
   // Create wrapped configuration
   const wrappedConfig = {
@@ -265,11 +270,12 @@ function wrapServer(serverName, serverConfig, rulesPath) {
     args: [
       '--service', serverName,
       '--target', targetCommand,
+      '--target-args', JSON.stringify(targetArgv),
       '--rules', rulesPath
     ],
     _original: {
       command: serverConfig.command,
-      args: serverConfig.args || []
+      args: originalArgs
     }
   };
 
@@ -301,35 +307,15 @@ function createBackup(configPath) {
   const backupPath = `${configPath}.backup-${timestamp}`;
 
   copyFileSync(configPath, backupPath);
+  // MCP configs frequently embed secrets (API tokens in `env`). Restrict the
+  // backup to owner-only so the copy does not widen exposure beyond the original.
+  try {
+    chmodSync(backupPath, 0o600);
+  } catch {
+    // Non-POSIX filesystems may not support chmod; the copy still succeeded.
+  }
 
   return backupPath;
-}
-
-/**
- * Wrap unwrapped servers in the config
- * @param {Object} config - Full config object with mcpServers
- * @param {string[]} unwrappedNames - Names of servers to wrap
- * @param {string} rulesPath - Absolute path to rules.json
- * @returns {Object} Modified config with wrapped servers
- */
-function wrapServers(config, unwrappedNames, rulesPath) {
-  const modifiedConfig = JSON.parse(JSON.stringify(config.rawConfig));
-
-  // Get reference to mcpServers in the modified config
-  let mcpServers;
-  if (config.format === 'claude-code') {
-    mcpServers = modifiedConfig.projects.mcpServers;
-  } else {
-    mcpServers = modifiedConfig.mcpServers;
-  }
-
-  // Wrap each unwrapped server
-  for (const serverName of unwrappedNames) {
-    const originalConfig = mcpServers[serverName];
-    mcpServers[serverName] = wrapServer(serverName, originalConfig, rulesPath);
-  }
-
-  return modifiedConfig;
 }
 
 /**
@@ -426,45 +412,25 @@ function generateDefaultRules(serviceName, tools) {
     admin: 'deny'
   };
 
-  if (tools.length === 0) {
-    // No tools discovered, create service-level rules
-    for (const [operation, permission] of Object.entries(safeDefaults)) {
-      if (permission === 'deny') {
-        rules.push({
-          service: serviceName,
-          operations: [operation],
-          permission: permission,
-          reason: `${operation.charAt(0).toUpperCase() + operation.slice(1)} operations denied by default for safety`
-        });
-      }
+  // Always emit an explicit rule for every operation type, regardless of which
+  // tools were discovered. This keeps the generated rule set complete so a
+  // `defaultPolicy: "deny"` file never accidentally blocks ordinary read/write
+  // traffic, and it states the intended posture explicitly rather than relying
+  // on a fallthrough default. Discovered tool names are still used (below, by
+  // the caller's logging) but do not change the safe-default policy.
+  void tools;
+  for (const [operation, permission] of Object.entries(safeDefaults)) {
+    const rule = {
+      service: serviceName,
+      operations: [operation],
+      permission: permission
+    };
+
+    if (permission === 'deny') {
+      rule.reason = `${operation.charAt(0).toUpperCase() + operation.slice(1)} operations denied by default for safety`;
     }
-  } else {
-    // Create rules based on discovered tools
-    const toolsByOperation = { read: [], write: [], delete: [], execute: [], admin: [] };
 
-    tools.forEach(toolName => {
-      const operation = detectOperation(toolName);
-      if (toolsByOperation[operation]) {
-        toolsByOperation[operation].push(toolName);
-      }
-    });
-
-    // Create rules for each operation type that has tools
-    for (const [operation, permission] of Object.entries(safeDefaults)) {
-      if (toolsByOperation[operation].length > 0) {
-        const rule = {
-          service: serviceName,
-          operations: [operation],
-          permission: permission
-        };
-
-        if (permission === 'deny') {
-          rule.reason = `${operation.charAt(0).toUpperCase() + operation.slice(1)} operations denied by default for safety`;
-        }
-
-        rules.push(rule);
-      }
-    }
+    rules.push(rule);
   }
 
   return rules;
@@ -515,10 +481,13 @@ async function ensureRulesExist(rulesPath, mcpServers) {
       console.log(`  ✓ Added ${rules.length} rule(s) for ${serverName}`);
     }
 
-    // Merge with existing rules
+    // Merge with existing rules. Preserve the existing file's defaultPolicy
+    // verbatim (including its absence) so updating an existing install never
+    // silently changes its fail-open/fail-closed posture.
     const mergedRules = {
       _comment: 'Auto-generated governance rules. Edit as needed.',
       _location: rulesPath,
+      ...(existingRules.defaultPolicy ? { defaultPolicy: existingRules.defaultPolicy } : {}),
       rules: [...existingRules.rules, ...newRules]
     };
 
@@ -540,6 +509,7 @@ async function ensureRulesExist(rulesPath, mcpServers) {
       const emptyRules = {
         _comment: 'Auto-generated governance rules. Add servers and run again.',
         _location: rulesPath,
+        defaultPolicy: 'deny',
         rules: []
       };
       writeFileSync(rulesPath, JSON.stringify(emptyRules, null, 2) + '\n');
@@ -563,10 +533,14 @@ async function ensureRulesExist(rulesPath, mcpServers) {
       }
     }
 
-    // Create rules file
+    // Create rules file. New installs are fail-closed by default: anything not
+    // matched by an explicit rule below is denied (the generated rules cover
+    // read/write/delete/execute/admin for every service, so normal traffic is
+    // unaffected). Set "defaultPolicy": "allow" to restore the permissive mode.
     const rulesData = {
       _comment: 'Auto-generated governance rules. Edit as needed.',
       _location: rulesPath,
+      defaultPolicy: 'deny',
       rules: allRules
     };
 

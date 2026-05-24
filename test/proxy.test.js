@@ -680,6 +680,152 @@ console.error('Mock permission server ready');
   });
 });
 
+describe('mcp-gov-proxy --target-args and defaultPolicy', () => {
+  let testDir;
+  let mockServerFile;
+
+  before(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'mcp-gov-targs-'));
+    mockServerFile = join(testDir, 'mock-argv.js');
+
+    // Mock server: reports its received argv on stderr at startup (so the test
+    // can verify argument boundaries), and answers tools/call with content.
+    writeFileSync(mockServerFile, `
+import { createInterface } from 'node:readline';
+process.stderr.write('ARGV=' + JSON.stringify(process.argv.slice(2)) + '\\n');
+const rl = createInterface({ input: process.stdin, terminal: false });
+rl.on('line', (line) => {
+  try {
+    const m = JSON.parse(line);
+    if (m.method === 'tools/call') {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'ok' }] } }) + '\\n');
+    }
+  } catch (e) { /* ignore */ }
+});
+    `.trim());
+  });
+
+  after(() => {
+    try { unlinkSync(mockServerFile); } catch (e) { /* ignore */ }
+  });
+
+  // Resolve as soon as the predicate over accumulated output is true (or time
+  // out). Condition-based instead of a fixed sleep, so it is fast and not flaky.
+  function waitFor(child, state, predicate, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
+      const check = () => { if (predicate(state)) finish(true); };
+      const onData = () => check();
+      child.stdout.on('data', onData);
+      child.stderr.on('data', onData);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      check();
+    });
+  }
+
+  function spawnProxy(extraArgs, rulesObj) {
+    const rulesFile = join(testDir, `rules-${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(rulesFile, JSON.stringify(rulesObj));
+    const child = spawn('node', [proxyPath, '--service', 'github',
+      '--target', `node ${mockServerFile}`, '--rules', rulesFile, ...extraArgs]);
+    const state = { out: '', err: '' };
+    child.stdout.on('data', (d) => { state.out += d.toString(); });
+    child.stderr.on('data', (d) => { state.err += d.toString(); });
+    return { child, state, rulesFile };
+  }
+
+  it('preserves argument boundaries via --target-args (path with spaces)', async () => {
+    const spacedArg = '/tmp/dir with spaces/data.json';
+    const argv = ['node', mockServerFile, spacedArg];
+    const { child, state, rulesFile } = spawnProxy(['--target-args', JSON.stringify(argv)], { rules: [] });
+
+    const got = await waitFor(child, state, (s) => s.err.includes('ARGV='));
+    child.kill('SIGTERM');
+    await new Promise((r) => child.on('close', r));
+    try { unlinkSync(rulesFile); } catch (e) { /* ignore */ }
+
+    assert.ok(got, 'Mock server should report its argv on startup');
+    const m = state.err.match(/ARGV=(\[.*\])/);
+    assert.ok(m, 'Should capture ARGV line from target stderr');
+    const reported = JSON.parse(m[1]);
+    assert.deepStrictEqual(reported, [spacedArg],
+      'Space-containing path must be passed as a single argv element, not re-split');
+  });
+
+  it('denies an unmatched operation when defaultPolicy is "deny"', async () => {
+    const { child, state, rulesFile } = spawnProxy([], {
+      defaultPolicy: 'deny',
+      rules: [{ service: 'github', operations: ['read'], permission: 'allow' }]
+    });
+
+    // Wait for the target (and thus the proxy) to be up before sending.
+    await waitFor(child, state, (s) => s.err.includes('ARGV='));
+
+    // 'github_create_repo' classifies as a write op; no rule allows write, so
+    // under defaultPolicy:deny it must be denied.
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'github_create_repo', arguments: {} }
+    }) + '\n');
+
+    const denied = await waitFor(child, state, (s) => /Permission denied/.test(s.out));
+    child.kill('SIGTERM');
+    await new Promise((r) => child.on('close', r));
+    try { unlinkSync(rulesFile); } catch (e) { /* ignore */ }
+
+    assert.ok(denied, 'Unmatched write op should be denied under defaultPolicy:deny');
+    assert.ok(!/"content"/.test(state.out), 'Denied op must not be forwarded to the target');
+  });
+
+  it('still allows an explicitly-allowed operation under defaultPolicy:deny', async () => {
+    const { child, state, rulesFile } = spawnProxy([], {
+      defaultPolicy: 'deny',
+      rules: [{ service: 'github', operations: ['read'], permission: 'allow' }]
+    });
+
+    await waitFor(child, state, (s) => s.err.includes('ARGV='));
+
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'github_list_repos', arguments: {} }
+    }) + '\n');
+
+    const allowed = await waitFor(child, state, (s) => /"content"/.test(s.out));
+    child.kill('SIGTERM');
+    await new Promise((r) => child.on('close', r));
+    try { unlinkSync(rulesFile); } catch (e) { /* ignore */ }
+
+    assert.ok(allowed, 'Explicitly-allowed read op should be forwarded under defaultPolicy:deny');
+  });
+
+  it('cannot be tricked into forging audit records via tool name (log injection)', async () => {
+    // A tool name containing a newline + a fake AUDIT line + pipe delimiters.
+    const malicious = 'evil"\n[AUDIT] FORGED | status=ALLOWED | tool=spoof';
+    const { child, state, rulesFile } = spawnProxy([], { rules: [] });
+
+    await waitFor(child, state, (s) => s.err.includes('ARGV='));
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: malicious, arguments: {} }
+    }) + '\n');
+
+    await waitFor(child, state, (s) => s.err.includes('"type":"AUDIT"'));
+    child.kill('SIGTERM');
+    await new Promise((r) => child.on('close', r));
+    try { unlinkSync(rulesFile); } catch (e) { /* ignore */ }
+
+    // Every audit record must be a single well-formed JSON line...
+    const auditLines = state.err.split('\n').filter((l) => l.includes('"type":"AUDIT"'));
+    const records = auditLines.map((l) => JSON.parse(l)); // throws if injection split the line
+    // ...and there must be exactly one, carrying the raw name verbatim (escaped),
+    // with no forged second record.
+    assert.strictEqual(records.length, 1, 'Exactly one audit record, not a forged extra');
+    assert.strictEqual(records[0].tool, malicious, 'Raw tool name preserved (and contained) in JSON');
+    assert.ok(!/^\[AUDIT\] FORGED/m.test(state.err), 'No forged plain-text [AUDIT] line emitted');
+  });
+});
+
 describe('mcp-gov-proxy audit logging', () => {
   let testDir;
   let rulesFile;

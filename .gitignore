@@ -11,6 +11,9 @@ logs/
 *.log
 npm-debug.log*
 
+# Config backups (may contain secrets copied from MCP configs)
+*.backup-*
+
 # OS specific
 .DS_Store
 Thumbs.db

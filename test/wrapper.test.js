@@ -732,6 +732,15 @@ describe('mcp-gov-wrap server wrapping logic', () => {
     const targetValue = wrappedServer.args[targetIndex + 1];
     assert.match(targetValue, /--port.*3000/);
     assert.match(targetValue, /--verbose/);
+
+    // Should also emit a structured --target-args array [command, ...args] that
+    // preserves argument boundaries (the proxy prefers this over --target).
+    const targsIndex = wrappedServer.args.indexOf('--target-args');
+    assert.ok(targsIndex !== -1, 'wrapped config should include --target-args');
+    const targetArgv = JSON.parse(wrappedServer.args[targsIndex + 1]);
+    assert.deepStrictEqual(targetArgv,
+      ['node', '/path/to/server.js', '--port', '3000', '--verbose'],
+      '--target-args must be [command, ...originalArgs] with boundaries intact');
   });
 
   test('should preserve environment variables when wrapping', async () => {

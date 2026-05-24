@@ -92,7 +92,8 @@ async function handleWrap() {
       continue;
     }
 
-    path = input.startsWith('~') ? input.replace('~', homedir()) : input;
+    // Expand a leading ~ or ~/ only; do not touch a ~ elsewhere in the path.
+    path = input.replace(/^~(?=$|\/)/, homedir());
 
     if (existsSync(path)) {
       break;
@@ -124,7 +125,8 @@ async function handleUnwrap() {
       continue;
     }
 
-    path = input.startsWith('~') ? input.replace('~', homedir()) : input;
+    // Expand a leading ~ or ~/ only; do not touch a ~ elsewhere in the path.
+    path = input.replace(/^~(?=$|\/)/, homedir());
 
     if (existsSync(path)) {
       break;

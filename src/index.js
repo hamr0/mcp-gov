@@ -7,6 +7,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { parseToolName } from './operation-detector.js';
+import { normalizeRules, isAllowed } from './rules.js';
 
 /**
  * @typedef {Object} ServerConfig
@@ -40,6 +41,13 @@ export class GovernedMCPServer {
   constructor(config, rules = {}) {
     this.config = config;
     this.rules = rules;
+    // Normalize whatever rule shape was passed (nested-map, legacy object, or
+    // array) into one canonical form, sharing the same matcher as the proxy.
+    // defaultPolicy is read from the rules object first (the documented
+    // location), falling back to the config object; defaults to 'allow' for
+    // backward compatibility.
+    this.normalizedRules = normalizeRules(rules, config.defaultPolicy);
+    this.defaultPolicy = this.normalizedRules.defaultPolicy;
     this.tools = new Map(); // Store tool definitions and handlers
     this.server = new Server(
       {
@@ -137,21 +145,7 @@ export class GovernedMCPServer {
    */
   checkPermission(toolName) {
     const { service, operation } = parseToolName(toolName);
-
-    // Check if service has rules
-    if (!this.rules[service]) {
-      // Default to 'allow' if no rule exists (permissive for POC)
-      return true;
-    }
-
-    // Check operation permission
-    const permission = this.rules[service][operation];
-    if (permission === 'deny') {
-      return false;
-    }
-
-    // Default to allow
-    return true;
+    return isAllowed(this.normalizedRules, service, operation);
   }
 
   /**
