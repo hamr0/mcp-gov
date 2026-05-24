@@ -268,6 +268,45 @@ Operation denied: [operation_type] operations are not allowed for [service_name]
 - Fine-grained argument-level permissions
 - Integration with secrets managers
 
+### Future Enhancements (post-2.0.0)
+
+Concrete backlog captured at the 2.0.0 security-hardening release. None are
+blocking; recorded here in case the project is picked back up. Scope is
+deliberately local-MCP governance (distinct from the autonomous-agent products
+that grew out of this).
+
+1. **Upgrade `@modelcontextprotocol/sdk` 0.5 → 1.x (clears the last advisory).**
+   - *What:* the pinned `^0.5.0` SDK carries a high-severity ReDoS advisory
+     (GHSA-8r9q-7v3j-jr4g) that still reaches library consumers.
+   - *Why it was deferred:* the 0.5→1.x API changed substantially, so this is a
+     real migration of `src/index.js` (`GovernedMCPServer`) plus re-testing, not
+     a version bump. The proxy/CLI path does **not** import the SDK, so the blast
+     radius is library (`GovernedMCPServer`) consumers only.
+   - *Effort:* medium; deserves its own branch.
+
+2. **Move enforcement beyond name heuristics (the real protection ceiling).**
+   - *What:* today operation type is inferred from the tool **name** (keyword
+     match) and arguments are never inspected, so a destructive tool named
+     without a destructive keyword is classified `write` and allowed. Only
+     `tools/call` is mediated — `resources/*`, `prompts/*` pass through
+     ungoverned.
+   - *Why it matters:* this is the boundary of what the tool actually enforces;
+     a fully adversarial MCP server can evade it. Closing it means explicit
+     per-tool (exact-name) rules + argument-level constraints (extends the
+     "Fine-grained argument-level permissions" / "Custom operation classifiers"
+     ideas above) and extending mediation to the other side-effecting methods.
+   - *Effort:* large; this is a feature/redesign, not a patch. Documented as a
+     known limitation in the README "Security Model & Limitations" section.
+
+3. **De-flake the proxy test suite.**
+   - *What:* the proxy tests use fixed `setTimeout` waits and flake under load;
+     `npm test` is `&&`-chained, so one flaky proxy failure aborts the whole run
+     (including in CI, which gates the publish workflow on `npm test`).
+   - *Fix:* convert the fixed-timeout proxy tests to condition-based waiting
+     (wait for expected output, not a fixed delay) — the pattern already used by
+     the `--target-args` / `defaultPolicy` / log-injection tests added in 2.0.0.
+   - *Effort:* small, low-risk, contained to `test/proxy.test.js`.
+
 ---
 
 ## 6. Technical Architecture
