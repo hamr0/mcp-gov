@@ -2,6 +2,11 @@
 
 All notable changes to mcp-gov will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **`publish.yml` is now manual-only (`workflow_dispatch`) — npm OIDC trusted publishing with provenance, idempotent, and verifies the registry end-state.**
+
 ## [2.0.0] - 2026-05-24
 
 Security-hardening release. Two changes are **breaking** — see Migration.
